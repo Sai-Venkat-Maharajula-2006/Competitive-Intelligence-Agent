@@ -135,6 +135,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("#### ⚙️ System Configuration")
+    use_memory = st.toggle("🧠 Enable Hindsight Memory Bank", value=True)
     st.markdown(f"**Bank ID:** `{MEMORY_BANK}`")
     st.markdown(f"**Engine:** `{GROQ_MODEL}`")
     st.markdown(f"**Recall Endpoint:** `hindsight.vectorize.io`")
@@ -155,6 +156,7 @@ for msg in st.session_state.chat_history:
 # Interactive chat input
 user_query = st.chat_input("Ask a strategic question (e.g. 'What is Synthetix Corp's GovPods strategy and how does it hurt us?')...")
 
+# ── Interactive Chat Input Processing ────────────────────────────────────────
 if user_query:
     # Add and render user query
     st.session_state.chat_history.append({"role": "user", "content": user_query})
@@ -162,39 +164,54 @@ if user_query:
         st.markdown(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Recalling memory bank & synthesizing strategic brief..."):
+        with st.spinner("Synthesizing strategic brief..."):
 
-            # ── Step 1: Recall context using nest_asyncio and asyncio.run ────
+            # ── Step 1: Recall context using Hindsight (If toggle is ON) ────
             recalled_context = ""
             raw_recall_preview = ""
-            try:
-                recall_fn = getattr(hindsight_client, "arecall", hindsight_client.recall)
-                recall_response = asyncio.run(
-                    recall_fn(
-                        bank_id=MEMORY_BANK,
-                        query=user_query,
-                        max_tokens=4096,
-                        budget="mid",
-                    )
-                )
 
-                recalled_context = str(recall_response)
-                raw_recall_preview = recalled_context[:1200] + ("\n... [truncated]" if len(recalled_context) > 1200 else "")
-            except Exception as e:
-                st.warning(f"⚠️ Memory recall notice: {e}. Generating response without historical context.")
+            if use_memory:
+                try:
+                    recall_fn = getattr(hindsight_client, "arecall", hindsight_client.recall)
+                    recall_response = asyncio.run(
+                        recall_fn(
+                            bank_id=MEMORY_BANK,
+                            query=user_query,
+                            max_tokens=4096,
+                            budget="mid",
+                        )
+                    )
+
+                    recalled_context = str(recall_response) if recall_response else "No exact historical match found."
+                    raw_recall_preview = recalled_context[:1200] + ("\n... [truncated]" if len(recalled_context) > 1200 else "")
+                except Exception as e:
+                    st.warning(f"⚠️ Memory recall notice: {e}. Generating response without historical context.")
+                    recalled_context = "Memory recall error encountered."
+            else:
+                recalled_context = "⚠️ HINDSIGHT MEMORY BANK IS CURRENTLY DISABLED (STATELESS MODE)."
 
             # ── Step 2: Formulate Groq prompt ────────────────────────────
-            system_prompt = (
-                "You are the Chief Competitive Intelligence Officer for NexusCorp. "
-                "Synthesize competitor actions into concise, high-impact executive briefings. "
-                "Ground your analysis in the recalled memory context below when available. "
-                "Organize your briefing strictly with: \n"
-                "### 1. Situation Analysis\n"
-                "### 2. Strategic Threat Assessment\n"
-                "### 3. Immediate Recommended Actions\n\n"
-                f"=== VERIFIED HISTORICAL INTEL (HINDSIGHT) ===\n{recalled_context or 'No specific historical memory matches found.'}\n"
-                "============================================="
-            )
+            if use_memory:
+                system_prompt = (
+                    "You are the Chief Competitive Intelligence Officer for NexusCorp. "
+                    "Synthesize competitor actions into concise, high-impact executive briefings. "
+                    "Ground your analysis in the recalled memory context below when available. "
+                    "Organize your briefing strictly with: \n"
+                    "### 1. Situation Analysis\n"
+                    "### 2. Strategic Threat Assessment\n"
+                    "### 3. Immediate Recommended Actions\n\n"
+                    f"=== VERIFIED HISTORICAL INTEL (HINDSIGHT) ===\n{recalled_context}\n"
+                    "============================================="
+                )
+            else:
+                system_prompt = (
+                    "You are the Chief Competitive Intelligence Officer for NexusCorp. "
+                    "Answer the user's question purely statelessly without using any persistent historical context or memory bank. "
+                    "Organize your briefing strictly with: \n"
+                    "### 1. Situation Analysis\n"
+                    "### 2. Strategic Threat Assessment\n"
+                    "### 3. Immediate Recommended Actions"
+                )
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -225,7 +242,7 @@ if user_query:
             st.markdown(analysis)
 
             # Clean expander to inspect raw recall data without cluttering UI
-            if raw_recall_preview:
+            if use_memory and raw_recall_preview:
                 with st.expander("🔍 View Raw Recall Context & Evidence Citations", expanded=False):
                     st.code(raw_recall_preview, language="text")
 
