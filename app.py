@@ -172,15 +172,26 @@ if user_query:
 
             if use_memory:
                 try:
-                    recall_fn = getattr(hindsight_client, "arecall", hindsight_client.recall)
-                    recall_response = asyncio.run(
-                        recall_fn(
+                    # Check for synchronous recall first to avoid asyncio task/timeout issues in Streamlit
+                    if hasattr(hindsight_client, "recall") and callable(getattr(hindsight_client, "recall")):
+                        recall_response = hindsight_client.recall(
                             bank_id=MEMORY_BANK,
                             query=user_query,
                             max_tokens=4096,
                             budget="mid",
                         )
-                    )
+                    else:
+                        # Fallback: create an explicit asyncio Task so the timeout context manager succeeds
+                        async def _fetch():
+                            return await hindsight_client.arecall(
+                                bank_id=MEMORY_BANK,
+                                query=user_query,
+                                max_tokens=4096,
+                                budget="mid",
+                            )
+                        loop = asyncio.get_event_loop()
+                        task = loop.create_task(_fetch())
+                        recall_response = loop.run_until_complete(task)
 
                     recalled_context = str(recall_response) if recall_response else "No exact historical match found."
                     raw_recall_preview = recalled_context[:1200] + ("\n... [truncated]" if len(recalled_context) > 1200 else "")
